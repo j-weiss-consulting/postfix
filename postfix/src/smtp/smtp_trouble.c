@@ -467,3 +467,67 @@ int     smtp_stream_except(SMTP_STATE *state, int code, const char *description)
      */
     return (smtp_bulk_fail(state, SMTP_THROTTLE));
 }
+
+#ifdef USE_TLS
+
+/* smtp_tls_fallback - apply fallback level and log warnings */
+
+int     smtp_tls_trouble(SMTP_STATE *state, int protocol_stage)
+{
+    SMTP_SESSION *session = state->session;
+    SMTP_TLS_POLICY *tls = session->tls;
+
+    /* Handle non-recoverable cases */
+    switch (protocol_stage) {
+    case STARTTLS_VERIFY_FALLBACK:
+	if (tls->fallback_level == TLS_LEV_NOTFOUND)
+	    return (-1);
+	break;
+    case STARTTLS_FEATURE_FALLBACK:
+	/* No recovery when skipping STARTTLS due to local problems */
+	if (session->features & SMTP_FEATURE_STARTTLS)
+	    return (-1);
+	/* FALLTHROUGH */
+    default:
+	if (TLS_REQUIRED(session->tls_level)
+	    && tls->fallback_level != TLS_LEV_MAY)
+	    return (-1);
+	break;
+    }
+
+    /* Log appropriate warning and perform fallback */
+    switch (protocol_stage) {
+    case STARTTLS_FEATURE_FALLBACK:
+	msg_warn("%s: cleartext fallback, host did not offer STARTTLS",
+		 session->namaddrport);
+	break;
+
+    case STARTTLS_COMMAND_FALLBACK:
+	msg_warn("%s: cleartext fallback, host refused to start TLS",
+		 session->namaddrport);
+	break;
+
+    case STARTTLS_HANDSHAKE_FALLBACK:
+	msg_warn("%s: cleartext fallback, TLS handshake failed",
+		 session->namaddrport);
+	break;
+
+    case STARTTLS_SESSION_FALLBACK:
+	msg_warn("%s: cleartext fallback, post-handshake TLS failure",
+		 session->namaddrport);
+	break;
+
+    case STARTTLS_VERIFY_FALLBACK:
+	msg_warn("%s: fallback to unathenticated TLS: %s: %s",
+		 session->namaddrport,
+		 TLS_CERT_IS_TRUSTED(session->tls_context) ?
+		 "Server certificate failed verification" :
+		 "Server certificate not trusted");
+	break;
+    }
+
+    session->tls_level = tls->fallback_level;
+    return (0);
+}
+
+#endif
